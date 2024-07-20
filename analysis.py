@@ -2,14 +2,15 @@ import pandas as pd
 import numpy as np
 from arch import arch_model
 import plotly.graph_objs as go
+from loguru import logger
 
-def calculate_volatility(data, window=21): 
-    data['Volatility'] = data['Best Transformation'].rolling(window=window).std()
+def calculate_volatility(data, window=21):
+    data['Volatility'] = data['Best Transformation'].rolling(window=window, min_periods=1).std() * np.sqrt(252)
+    data['Volatility'].fillna(method='bfill', inplace=True)  # Backward fill to handle NaN values
+    logger.info(f"Calculated Volatility Head:\n{data['Volatility'].head(20)}")
     return data
- 
-#https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&ved=2ahUKEwiNseeI4rCGAxUUQ0EAHfGSD88QFnoECA8QAQ&url=https%3A%2F%2Farch.readthedocs.io%2Fen%2Flatest%2Funivariate%2Fintroduction.html&usg=AOvVaw36nBThBOb_BGaOov2WSS4r&opi=89978449
-#this is very wrong**
-def fit_best_garch_tarch_models(data, max_p=5, max_q=5): 
+
+def fit_best_garch_tarch_models(data, max_p=5, max_q=5):
     returns = data['Best Transformation'].dropna()
     best_garch_aic = np.inf
     best_tarch_aic = np.inf
@@ -21,7 +22,7 @@ def fit_best_garch_tarch_models(data, max_p=5, max_q=5):
     for p in range(1, max_p + 1):
         for q in range(1, max_q + 1):
             try:
-                garch_model = arch_model(returns * 100, vol='Garch', p=p, q=q, rescale=False) #not 100, should be just normal returns
+                garch_model = arch_model(returns, vol='Garch', p=p, q=q, rescale=False)
                 garch_fit = garch_model.fit(disp="off")
                 if garch_fit.aic < best_garch_aic:
                     best_garch_aic = garch_fit.aic
@@ -31,7 +32,7 @@ def fit_best_garch_tarch_models(data, max_p=5, max_q=5):
                 continue
 
             try:
-                tarch_model = arch_model(returns * 100, vol='Garch', p=p, q=q, o=1, rescale=False)
+                tarch_model = arch_model(returns, vol='Garch', p=p, q=q, o=1, rescale=False)
                 tarch_fit = tarch_model.fit(disp="off")
                 if tarch_fit.aic < best_tarch_aic:
                     best_tarch_aic = tarch_fit.aic
@@ -66,36 +67,46 @@ def fit_best_garch_tarch_models(data, max_p=5, max_q=5):
 
 
 def plot_volatility_volume(stock_data, ticker):
-    daily_returns = stock_data['Best Transformation'].pct_change()
-    volatility = daily_returns.rolling(window=252).std() * np.sqrt(252)
-    
-    volume = (stock_data['Volume'] - stock_data['Volume'].mean()) / stock_data['Volume'].std()
+    daily_returns = stock_data['Best Transformation']
+    volatility = daily_returns.rolling(window=252, min_periods=1).std() * np.sqrt(252)
+    volatility.fillna(method='bfill', inplace=True)
+
+    # Normalize data for better comparison
+    volatility_normalized = (volatility - volatility.mean()) / volatility.std()
+    volume_normalized = (stock_data['Volume'] - stock_data['Volume'].mean()) / stock_data['Volume'].std()
 
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
         x=volatility.index,
-        y=volatility,
+        y=volatility_normalized,
         mode='lines',
-        name=f'Volatility_{ticker}'
+        name=f'Volatility_{ticker}',
+        line=dict(color='blue')
     ))
 
     fig.add_trace(go.Scatter(
-        x=volume.index,
-        y=volume,
+        x=volume_normalized.index,
+        y=volume_normalized,
         mode='lines',
         name=f'Volume_{ticker}',
-        yaxis='y2'
+        yaxis='y2',
+        line=dict(color='red')
     ))
 
     fig.update_layout(
         title=f'{ticker} Stock Volatility and Volume Analysis',
         xaxis_title='Date',
-        yaxis=dict(title='Volatility', side='left'),
-        yaxis2=dict(title='Volume', side='right', overlaying='y', type='linear'),
-        width=1000,  
-        height=600,  
-        showlegend=True
+        yaxis=dict(
+            title='Volatility',
+            side='left'
+        ),
+        yaxis2=dict(
+            title='Volume',
+            side='right',
+            overlaying='y',
+            type='linear'
+        )
     )
 
     fig.show()
