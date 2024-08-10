@@ -1,47 +1,198 @@
+
+
+
+
+
+get_ipython().system('pip install numpy pandas matplotlib plotly yfinance statsmodels')
+
+
+# In[13]:
+
+
+import numpy as np
 import pandas as pd
-from loguru import logger
-from fetchdata import fetch_stock_data
-from dataprep import prepare_stock_data, correlation_analysis, decompose_time_series
-from analysis import calculate_volatility, fit_best_garch_tarch_models, plot_volatility_volume
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import yfinance as yf
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import adfuller, coint
+from statsmodels.tsa.seasonal import seasonal_decompose
 
+
+# In[ ]:
+
+
+
+
+
+# In[14]:
+
+
+import yfinance as yf
+
+def fetch_data(tickers, start_date, end_date):
+    data = yf.download(tickers, start=start_date, end=end_date)
+    return data
 tickers = ["AAPL", "MSFT", "TSLA", "JPM", "XOM"]
-start_date = "2015-01-01"
-end_date = "2023-01-01"
 
-stock_data = fetch_stock_data(tickers, start_date, end_date)
+stock_data = fetch_data(tickers, "2015-01-01", "2023-01-01")
 stock_data.fillna(method='ffill', inplace=True)  # Forward fill to handle missing data
 
-print(stock_data.head())  # Print the structure of stock_data for debugging
 
-for stock_ticker in tickers:
-    logger.info(f"Processing data for {stock_ticker}")
+# In[15]:
 
-    if (stock_ticker, 'Adj Close') in stock_data.columns:
-        stock_ticker_data = stock_data.loc[:, (stock_ticker, slice(None))]
-        stock_ticker_data.columns = stock_ticker_data.columns.droplevel(0)  # Drop the ticker level to simplify column names
 
-        result = prepare_stock_data(stock_ticker_data)
+print(stock_data.head())
 
-        if result is not None:
-            prepared_data, message = result
-            logger.info(message)
 
-            if 'Best Transformation' in prepared_data.columns:
-                logger.info("Transformations Applied:")
-                logger.info(prepared_data[['Adj Close', 'Best Transformation']].head())
+# In[16]:
 
-            analysis_data = calculate_volatility(prepared_data)
-            logger.info(analysis_data)
 
-            correlation_analysis(prepared_data)
-            
-            best_model_type, best_model, best_model_summary = fit_best_garch_tarch_models(prepared_data)  
-            logger.info(f"Best model type: {best_model_type}")
-            logger.info(f"Best model: {best_model}")
-            logger.info(best_model_summary)
-            
-            plot_volatility_volume(analysis_data, stock_ticker)
-        else:
-            logger.error(f"Data preparation failed for {stock_ticker}.")
-    else:
-        logger.error(f"{stock_ticker} data is not present in stock_data.")
+stock_data
+
+
+# In[17]:
+
+
+for ticker in tickers:
+    print(f"Analyzing {ticker}")
+
+
+# In[18]:
+
+
+for ticker in tickers:
+    daily_returns = stock_data['Adj Close'][ticker].pct_change()
+    volatility = daily_returns.rolling(window=252).std() * np.sqrt(252)
+    volume = (stock_data['Volume'][ticker] - stock_data['Volume'][ticker].mean()) / stock_data['Volume'][ticker].std()
+
+
+
+# In[19]:
+
+
+from statsmodels.tsa.stattools import adfuller
+
+def perform_adf_test(series):
+    result = adfuller(series.dropna())
+    print('ADF Statistic: %f' % result[0])
+    print('p-value: %f' % result[1])
+    print('Critical Values:')
+    for key, value in result[4].items():
+        print('\t%s: %.3f' % (key, value))
+
+
+stock_data = fetch_data(tickers, "2015-01-01", "2023-01-01")
+
+for ticker in tickers:
+    print(f"Performing ADF Test for {ticker}")
+    perform_adf_test(stock_data['Adj Close'][ticker])
+
+
+# In[20]:
+
+
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+
+for ticker in tickers:
+    print(f"Decomposing Time Series of {ticker}")
+
+    ts_data = stock_data['Adj Close'][ticker].dropna()
+    
+    decomposition = seasonal_decompose(ts_data, model='multiplicative', period=252)
+    
+    decomposition.plot()
+    plt.suptitle(ticker)
+    plt.show()
+
+
+# In[21]:
+
+
+stock_data = fetch_data(tickers, "2015-01-01", "2023-01-01")
+
+for ticker in tickers:
+    daily_returns = stock_data['Adj Close'][ticker].pct_change()
+    volatility = daily_returns.rolling(window=252).std() * np.sqrt(252)
+    
+    volume = (stock_data['Volume'][ticker] - stock_data['Volume'][ticker].mean()) / stock_data['Volume'][ticker].std()
+
+    correlation_data = pd.concat([volatility, volume], axis=1)
+    correlation_data.columns = ['Volatility', 'Volume']
+
+    correlation_pearson = correlation_data.corr(method='pearson').iloc[0, 1]
+    correlation_spearman = correlation_data.corr(method='spearman').iloc[0, 1]
+
+    print(f"Pearson Correlation for {ticker}: {correlation_pearson}")
+    print(f"Spearman Correlation for {ticker}: {correlation_spearman}")
+
+
+# In[22]:
+
+
+for ticker in tickers:
+    print(f"\nPerforming OLS Regression for {ticker}")
+
+    daily_returns = stock_data['Adj Close'][ticker].pct_change()
+    volatility = daily_returns.rolling(window=252).std() * np.sqrt(252)
+    
+    volume = (stock_data['Volume'][ticker] - stock_data['Volume'][ticker].mean()) / stock_data['Volume'][ticker].std()
+    
+    aligned_data = pd.concat([volatility, volume], axis=1).dropna()
+    aligned_volatility = aligned_data.iloc[:, 0]
+    aligned_volume = aligned_data.iloc[:, 1]
+    
+    X = sm.add_constant(aligned_volume)  # Adds a constant term to the predictor
+    y = aligned_volatility
+
+    model = sm.OLS(y, X).fit()
+
+    print(model.summary())
+
+
+# In[23]:
+
+
+
+for ticker in tickers:
+    daily_returns = stock_data['Adj Close'][ticker].pct_change()
+    volatility = daily_returns.rolling(window=252).std() * np.sqrt(252)
+    
+    volume = (stock_data['Volume'][ticker] - stock_data['Volume'][ticker].mean()) / stock_data['Volume'][ticker].std()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=volatility.index,
+        y=volatility,
+        mode='lines',
+        name=f'Volatility_{ticker}'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=volume.index,
+        y=volume,
+        mode='lines',
+        name=f'Volume_{ticker}',
+        yaxis='y2'
+    ))
+
+    fig.update_layout(
+        title=f'{ticker} Stock Volatility and Volume Analysis',
+        xaxis_title='Date',
+        yaxis=dict(title='Volatility', side='left'),
+        yaxis2=dict(title='Volume', side='right', overlaying='y', type='linear')
+    )
+
+    fig.show()
+
+    input("Press Enter to continue to the next ticker analysis...")
+
+
+# In[ ]:
+
+
+
+
+
